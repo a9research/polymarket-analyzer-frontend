@@ -1,0 +1,607 @@
+"use client";
+
+import { useQuery } from "@tanstack/react-query";
+import Link from "next/link";
+import {
+  BrainCircuit,
+  ChevronDown,
+  Copy,
+  Star,
+  TriangleAlert,
+} from "lucide-react";
+import { useMemo } from "react";
+import toast from "react-hot-toast";
+import { fetchAnalyzeReport } from "@/lib/api";
+import { useWatchlist } from "@/store/watchlist";
+import { cn } from "@/lib/cn";
+
+function fmtUsd(n: number, opts?: { signed?: boolean }) {
+  const sign =
+    opts?.signed === true ? (n >= 0 ? "+" : "") : n < 0 ? "-" : "";
+  const v = Math.abs(n);
+  if (v >= 1e6) return `${sign}$${(v / 1e6).toFixed(2)}M`;
+  if (v >= 1e3) return `${sign}$${(v / 1e3).toFixed(1)}K`;
+  return `${sign}$${v.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+}
+
+function shortAddr(a: string) {
+  if (a.length <= 14) return a;
+  return `${a.slice(0, 8)}...${a.slice(-4)}`;
+}
+
+function hourEntries(map: Record<string, number>) {
+  const out: { h: number; c: number }[] = [];
+  for (let h = 0; h < 24; h++) {
+    const c = map[String(h)] ?? map[h as unknown as string] ?? 0;
+    out.push({ h, c });
+  }
+  const max = Math.max(1, ...out.map((x) => x.c));
+  return { out, max };
+}
+
+export function AccountDashboard({ address }: { address: string }) {
+  const wallet = address.toLowerCase();
+  const { add, remove, has } = useWatchlist();
+  const watching = has(wallet);
+
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
+    queryKey: ["analyze", wallet],
+    queryFn: ({ signal }) => fetchAnalyzeReport(wallet, { signal }),
+  });
+
+  const heat = useMemo(() => {
+    if (!data) return null;
+    return hourEntries(
+      data.time_analysis.active_hours_utc as Record<string, number>,
+    );
+  }, [data]);
+
+  const bucketBars = useMemo(() => {
+    if (!data?.price_buckets_chart?.length) return [];
+    const max = Math.max(1, ...data.price_buckets_chart.map((b) => b.count));
+    return data.price_buckets_chart.map((b) => ({
+      ...b,
+      pct: (b.count / max) * 100,
+    }));
+  }, [data]);
+
+  if (isLoading) {
+    return (
+      <div className="py-24 text-center font-jetbrains text-sm text-zinc-500">
+        EXECUTE // FETCHING_REPORT...
+      </div>
+    );
+  }
+
+  if (isError || !data) {
+    return (
+      <div className="rounded-xl border border-error/30 bg-error-container/10 p-8 text-center">
+        <p className="font-jetbrains text-sm text-error">
+          {(error as Error)?.message ?? "加载失败"}
+        </p>
+        <button
+          type="button"
+          onClick={() => refetch()}
+          className="mt-4 rounded-sm bg-primary px-4 py-2 font-jetbrains text-xs font-bold text-on-primary"
+        >
+          RETRY
+        </button>
+      </div>
+    );
+  }
+
+  const fe = data.frontend;
+  const gp = data.gamma_profile;
+  const truncated = data.data_fetch?.truncated;
+
+  return (
+    <div className="space-y-10 pb-24">
+      {truncated && (
+        <div className="flex items-center justify-center gap-3 border-b border-error/30 bg-error-container/20 py-2 px-4">
+          <TriangleAlert className="h-4 w-4 shrink-0 text-error" />
+          <p className="font-jetbrains text-xs uppercase tracking-wider text-error">
+            数据采样截断，仅显示部分交易 // DATA_SAMPLING_ACTIVE
+          </p>
+        </div>
+      )}
+
+      {/* Profile */}
+      <section className="flex flex-col justify-between gap-6 md:flex-row md:items-end">
+        <div className="flex items-center gap-4 sm:gap-6">
+          <div className="relative">
+            {gp?.avatar_url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={gp.avatar_url}
+                alt=""
+                className="h-14 w-14 rounded-full border-2 border-primary/30 p-0.5 sm:h-16 sm:w-16"
+              />
+            ) : (
+              <div className="flex h-14 w-14 items-center justify-center rounded-full border-2 border-primary/30 bg-surface-container-highest font-headline text-xl text-primary sm:h-16 sm:w-16">
+                {wallet.slice(2, 3).toUpperCase()}
+              </div>
+            )}
+            <div className="absolute -bottom-1 -right-1 h-4 w-4 rounded-full border-2 border-background bg-secondary animate-pulse-live" />
+          </div>
+          <div className="min-w-0">
+            <div className="mb-1 flex items-center gap-2">
+              <h1 className="font-headline text-2xl font-bold uppercase tracking-tight text-white sm:text-4xl">
+                {gp?.display_name || gp?.username || "Wallet"}
+              </h1>
+              <button
+                type="button"
+                onClick={() => {
+                  if (watching) remove(wallet);
+                  else {
+                    add(wallet);
+                    toast.success("已加入 Watchlist");
+                  }
+                }}
+                className={cn(
+                  "rounded p-1 transition-colors",
+                  watching ? "text-secondary" : "text-zinc-500 hover:text-primary",
+                )}
+                aria-label="watchlist"
+              >
+                <Star className={cn("h-5 w-5", watching && "fill-secondary")} />
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                void navigator.clipboard.writeText(data.wallet);
+                toast.success("已复制");
+              }}
+              className="group flex items-center gap-2 font-jetbrains text-sm text-zinc-500"
+            >
+              {shortAddr(data.wallet)}
+              <Copy className="h-4 w-4 group-hover:text-primary" />
+            </button>
+          </div>
+        </div>
+
+        <details className="group w-full overflow-hidden rounded-lg border border-white/5 bg-surface-container-low md:max-w-md">
+          <summary className="flex cursor-pointer items-center justify-between p-4 hover:bg-white/5">
+            <span className="font-jetbrains text-xs text-zinc-400">
+              数据说明 // DATA_SPEC
+            </span>
+            <ChevronDown className="h-4 w-4 text-zinc-500 transition-transform group-open:rotate-180" />
+          </summary>
+          <div className="max-w-md p-4 pt-0 font-body text-xs leading-relaxed text-zinc-500">
+            {data.notes?.length
+              ? data.notes.join(" ")
+              : "net_pnl 为成交现金流口径；frontend.*.pnl 为单笔已实现（平均成本法）。详见后端 README。"}
+          </div>
+        </details>
+      </section>
+
+      {isFetching && !isLoading && (
+        <p className="font-jetbrains text-[10px] text-primary">REFRESHING...</p>
+      )}
+
+      {/* KPI */}
+      <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <Kpi label="Total Trades" value={String(data.lifetime.total_trades)} />
+        <Kpi label="Total Volume" value={fmtUsd(data.lifetime.total_volume)} />
+        <Kpi
+          label="Lifetime Net PnL"
+          value={fmtUsd(data.lifetime.net_pnl, { signed: true })}
+          valueClass={
+            data.lifetime.net_pnl >= 0 ? "text-secondary" : "text-tertiary"
+          }
+        />
+        <Kpi
+          label="Open Position Value"
+          value={fmtUsd(data.lifetime.open_position_value)}
+          valueClass="text-primary"
+        />
+      </section>
+
+      {/* 3-col analysis */}
+      <section className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <Panel title="Market Distribution" dot="bg-primary">
+          <ul className="divide-y divide-white/5 font-jetbrains text-[11px]">
+            {data.market_distribution.slice(0, 6).map((m) => (
+              <li
+                key={m.market_type}
+                className="flex justify-between py-2 hover:bg-white/5"
+              >
+                <span className="text-zinc-400">{m.market_type}</span>
+                <span className="text-white">{fmtUsd(m.volume)}</span>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+
+        <Panel title="Entry Price Buckets" dot="bg-secondary">
+          <div className="space-y-4">
+            {bucketBars.map((b) => (
+              <div key={b.label} className="group">
+                <div className="mb-1 flex justify-between font-jetbrains text-[10px] text-zinc-500">
+                  <span>{b.label}</span>
+                  <span>{b.count}</span>
+                </div>
+                <div className="h-1.5 overflow-hidden rounded-full bg-zinc-800">
+                  <div
+                    className="h-full rounded-full bg-primary transition-all"
+                    style={{ width: `${b.pct}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+
+        <Panel title="Time Analysis (UTC)" dot="bg-tertiary">
+          {heat && (
+            <>
+              <div className="mb-6 grid grid-cols-6 gap-1">
+                {heat.out.map(({ h, c }) => (
+                  <div
+                    key={h}
+                    title={`${h}:00 — ${c}`}
+                    className="aspect-square rounded-sm bg-zinc-800"
+                    style={{
+                      opacity: 0.25 + (c / heat.max) * 0.75,
+                      backgroundColor:
+                        c > 0 ? "rgb(133, 173, 255)" : undefined,
+                    }}
+                  />
+                ))}
+              </div>
+              <div className="space-y-2 font-jetbrains text-xs text-white">
+                <RowKV
+                  k="Metadata missing"
+                  v={`${(data.time_analysis.metadata_missing_ratio * 100).toFixed(0)}%`}
+                />
+                {data.time_analysis.entry_to_resolution_p90_sec != null && (
+                  <RowKV
+                    k="Entry→Res P90 (s)"
+                    v={String(
+                      Math.round(data.time_analysis.entry_to_resolution_p90_sec),
+                    )}
+                  />
+                )}
+              </div>
+            </>
+          )}
+        </Panel>
+      </section>
+
+      {/* Patterns */}
+      <section className="grid grid-cols-1 gap-6 md:grid-cols-3">
+        <div className="rounded-xl border border-white/5 bg-surface-container-low p-6">
+          <span className="mb-4 block font-jetbrains text-[10px] uppercase text-zinc-500">
+            Overall Win Rate
+          </span>
+          <WinRing pct={data.trading_patterns.win_rate_overall} />
+        </div>
+        <div className="md:col-span-2 rounded-xl border border-white/5 bg-surface-container-low p-6">
+          <div className="mb-6 flex justify-between font-jetbrains text-[10px] uppercase text-zinc-500">
+            <span>Win Rate by Market Type</span>
+            <span className="text-primary">SESSION</span>
+          </div>
+          <div className="space-y-5">
+            {data.trading_patterns.win_rate_by_market_type.map((x) => (
+              <div key={x.market_type} className="flex items-center gap-4">
+                <span className="w-24 shrink-0 font-jetbrains text-[10px] text-zinc-400">
+                  {x.market_type}
+                </span>
+                <div className="flex h-3 flex-1 overflow-hidden rounded-sm bg-zinc-800">
+                  <div
+                    className="h-full bg-secondary"
+                    style={{ width: `${Math.min(100, x.win_rate)}%` }}
+                  />
+                </div>
+                <span className="w-10 shrink-0 text-right font-jetbrains text-[10px] text-zinc-300">
+                  {x.win_rate.toFixed(0)}%
+                </span>
+              </div>
+            ))}
+          </div>
+          <div className="mt-6 grid grid-cols-2 gap-2 font-jetbrains text-[10px] text-zinc-500">
+            <span>BUY {data.trading_patterns.side_bias.buy_pct.toFixed(0)}%</span>
+            <span>SELL {data.trading_patterns.side_bias.sell_pct.toFixed(0)}%</span>
+            <span>YES {data.trading_patterns.side_bias.yes_pct.toFixed(0)}%</span>
+            <span>NO {data.trading_patterns.side_bias.no_pct.toFixed(0)}%</span>
+          </div>
+        </div>
+      </section>
+
+      {/* Strategy */}
+      <section className="relative overflow-hidden rounded-xl border border-primary/20 bg-gradient-to-br from-[#171717] to-[#0e0e0e] p-6 sm:p-8">
+        <BrainCircuit className="pointer-events-none absolute right-4 top-4 h-24 w-24 text-primary/10 sm:h-32 sm:w-32" />
+        <div className="relative z-10 grid grid-cols-1 gap-10 lg:grid-cols-2">
+          <div>
+            <div className="mb-6 flex flex-wrap items-center gap-3">
+              <span className="rounded-full border border-primary/20 bg-primary/10 px-3 py-1 font-jetbrains text-[10px] uppercase tracking-tighter text-primary">
+                Strategy Inference
+              </span>
+              <span className="font-jetbrains text-[10px] text-zinc-500">
+                {data.schema_version}
+              </span>
+            </div>
+            <h2 className="mb-4 font-headline text-2xl font-bold sm:text-3xl">
+              {data.strategy_inference.primary_style}
+            </h2>
+            <div className="rounded border border-white/5 bg-black/40 p-4 font-jetbrains text-xs">
+              <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all text-zinc-300">
+                {JSON.stringify(data.strategy_inference.rule_json, null, 2)}
+              </pre>
+            </div>
+          </div>
+          <div>
+            <div className="mb-2 flex justify-between">
+              <span className="font-jetbrains text-[10px] uppercase text-zinc-500">
+                Pseudocode
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  void navigator.clipboard.writeText(
+                    data.strategy_inference.pseudocode,
+                  );
+                  toast.success("已复制伪代码");
+                }}
+                className="flex items-center gap-1 font-jetbrains text-[10px] text-zinc-500 hover:text-white"
+              >
+                <Copy className="h-3 w-3" /> Copy
+              </button>
+            </div>
+            <pre className="max-h-64 overflow-auto rounded-lg border border-white/5 bg-zinc-900/80 p-4 font-jetbrains text-[11px] text-primary/90">
+              {data.strategy_inference.pseudocode}
+            </pre>
+            {fe?.ai_copy_prompt && (
+              <button
+                type="button"
+                onClick={() => {
+                  void navigator.clipboard.writeText(fe.ai_copy_prompt);
+                  toast.success("已复制 AI Prompt");
+                }}
+                className="mt-4 w-full rounded-sm border border-white/10 py-2 font-jetbrains text-[10px] text-zinc-400 hover:bg-white/5"
+              >
+                COPY // AI_PROMPT
+              </button>
+            )}
+          </div>
+        </div>
+      </section>
+
+      {/* Tables */}
+      {fe?.current_positions && fe.current_positions.length > 0 && (
+        <DataTable
+          title="Current Positions"
+          badge={`${fe.current_positions.length} ACTIVE`}
+          columns={["Market", "Outcome", "Size", "Avg", "Value"]}
+          rows={fe.current_positions.map((p) => ({
+            cells: [
+              p.title || p.slug || "—",
+              p.outcome || "—",
+              p.size != null ? String(p.size) : "—",
+              p.avg_price != null ? String(p.avg_price) : "—",
+              p.current_value != null ? fmtUsd(p.current_value) : "—",
+            ],
+          }))}
+        />
+      )}
+
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
+        <HighlightTable title="Biggest Wins (pnl)" rows={fe?.biggest_wins} positive />
+        <HighlightTable title="Biggest Losses (pnl)" rows={fe?.biggest_losses} />
+      </div>
+
+      {fe?.recent_trades && fe.recent_trades.length > 0 && (
+        <div className="rounded-xl border border-white/5 bg-surface-container-low">
+          <div className="border-b border-white/5 px-6 py-4 font-jetbrains text-xs uppercase tracking-widest">
+            Recent Trades
+          </div>
+          <ul className="divide-y divide-white/5">
+            {fe.recent_trades.slice(0, 15).map((t, i) => (
+              <li
+                key={`${t.timestamp}-${i}`}
+                className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 font-jetbrains text-[11px] sm:px-6"
+              >
+                <span className="text-zinc-400">{t.side}</span>
+                <span className="min-w-0 flex-1 truncate text-white">
+                  {t.title || t.slug}
+                </span>
+                <span className={t.pnl >= 0 ? "text-secondary" : "text-tertiary"}>
+                  {fmtUsd(t.pnl, { signed: true })}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <p className="text-center font-jetbrains text-[10px] text-zinc-600">
+        <Link href="/" className="hover:text-primary">
+          ← BACK // TERMINAL
+        </Link>
+      </p>
+    </div>
+  );
+}
+
+function Kpi({
+  label,
+  value,
+  valueClass,
+}: {
+  label: string;
+  value: string;
+  valueClass?: string;
+}) {
+  return (
+    <div className="rounded-lg border border-white/5 bg-surface-container-low p-5 sm:p-6">
+      <span className="mb-2 block font-jetbrains text-[10px] uppercase tracking-widest text-zinc-500">
+        {label}
+      </span>
+      <div
+        className={cn(
+          "font-headline text-2xl font-bold tracking-tight sm:text-3xl",
+          valueClass ?? "text-white",
+        )}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function Panel({
+  title,
+  dot,
+  children,
+}: {
+  title: string;
+  dot: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-xl bg-surface-container p-5 sm:p-6">
+      <h3 className="mb-6 flex items-center gap-2 font-jetbrains text-xs uppercase tracking-widest text-zinc-400">
+        <span className={cn("h-2 w-2 rounded-full", dot)} />
+        {title}
+      </h3>
+      {children}
+    </div>
+  );
+}
+
+function RowKV({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex justify-between">
+      <span className="text-[10px] uppercase text-zinc-500">{k}</span>
+      <span>{v}</span>
+    </div>
+  );
+}
+
+function WinRing({ pct }: { pct: number }) {
+  const p = Math.min(100, Math.max(0, pct));
+  const dash = `${p}, 100`;
+  return (
+    <div className="relative mx-auto w-32 h-32">
+      <svg className="-rotate-90 h-full w-full" viewBox="0 0 36 36">
+        <path
+          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+          fill="none"
+          stroke="#262626"
+          strokeWidth="2.5"
+        />
+        <path
+          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+          fill="none"
+          stroke="#00fd87"
+          strokeWidth="2.5"
+          strokeDasharray={dash}
+        />
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className="font-headline text-2xl font-bold">{p.toFixed(0)}%</span>
+        <span className="text-[8px] font-jetbrains text-zinc-500">WIN_RATE</span>
+      </div>
+    </div>
+  );
+}
+
+function DataTable({
+  title,
+  badge,
+  columns,
+  rows,
+}: {
+  title: string;
+  badge?: string;
+  columns: string[];
+  rows: { cells: string[] }[];
+}) {
+  return (
+    <div className="overflow-hidden rounded-xl bg-surface-container-low">
+      <div className="flex justify-between border-b border-white/5 px-4 py-4 sm:px-6">
+        <h3 className="font-jetbrains text-xs font-bold uppercase tracking-widest">
+          {title}
+        </h3>
+        {badge && (
+          <span className="font-jetbrains text-xs text-zinc-500">{badge}</span>
+        )}
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left font-jetbrains text-xs">
+          <thead>
+            <tr className="border-b border-white/5 text-zinc-500">
+              {columns.map((c) => (
+                <th key={c} className="px-4 py-3 font-medium uppercase sm:px-6">
+                  {c}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-white/5">
+            {rows.map((r, i) => (
+              <tr key={i} className="hover:bg-white/5">
+                {r.cells.map((c, j) => (
+                  <td key={j} className="px-4 py-3 text-white sm:px-6">
+                    {c}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function HighlightTable({
+  title,
+  rows,
+  positive,
+}: {
+  title: string;
+  rows?: Array<{
+    slug: string;
+    title?: string | null;
+    pnl: number;
+    price: number;
+    size: number;
+  }>;
+  positive?: boolean;
+}) {
+  if (!rows?.length) {
+    return (
+      <div className="rounded-xl border border-white/5 bg-surface-container-low p-6 font-jetbrains text-xs text-zinc-500">
+        {title} — NO_DATA
+      </div>
+    );
+  }
+  return (
+    <div className="overflow-hidden rounded-xl bg-surface-container-low">
+      <div className="border-b border-white/5 px-6 py-4 font-jetbrains text-xs uppercase tracking-widest">
+        {title}
+      </div>
+      <ul className="divide-y divide-white/5">
+        {rows.map((r, i) => (
+          <li
+            key={`${r.slug}-${i}`}
+            className="flex items-center justify-between gap-2 px-4 py-3 sm:px-6"
+          >
+            <span className="min-w-0 truncate font-jetbrains text-xs text-white">
+              {r.title || r.slug}
+            </span>
+            <span
+              className={cn(
+                "shrink-0 font-jetbrains text-xs font-bold",
+                positive ? "text-secondary" : "text-tertiary",
+              )}
+            >
+              {fmtUsd(r.pnl, { signed: true })}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
