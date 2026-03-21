@@ -36,12 +36,22 @@ export function SiteHeader({ variant = "home" }: SiteHeaderProps) {
   return (
     <header className="sticky top-0 z-50 border-b border-white/10 bg-[#0e0e0e]/95 backdrop-blur-md">
       <div className="mx-auto flex w-full max-w-[1920px] items-center gap-4 px-4 py-3 sm:px-6">
-        <div className="flex min-w-0 flex-1 items-center gap-6 lg:gap-8">
+        <div className="flex min-w-0 flex-1 items-center gap-4 sm:gap-6 lg:gap-8">
           <Link
             href="/"
-            className="font-headline text-lg font-bold uppercase tracking-widest text-white sm:text-xl"
+            className="flex min-w-0 shrink-0 items-center gap-2 sm:gap-3"
           >
-            Polymarket Analyzer
+            {/* eslint-disable-next-line @next/next/no-img-element -- 本地矢量 logo */}
+            <img
+              src="/logo.svg"
+              alt=""
+              width={1072}
+              height={313}
+              className="h-7 w-auto sm:h-8"
+            />
+            <span className="max-w-[9rem] truncate font-headline text-sm font-bold uppercase tracking-widest text-white sm:max-w-none sm:text-lg md:text-xl">
+              Polymarket Analyzer
+            </span>
           </Link>
           <nav className="hidden items-center gap-6 lg:flex">
             {nav.map(({ href, label }) => (

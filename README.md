@@ -2,6 +2,10 @@
 
 基于 **Stitch** 导出的「**Obsidian Terminal**」视觉（见仓库外素材 `官网设计/2/stitch` 与本文档 `docs/design/STITCH_DESIGN.md`）：深灰底、电蓝主色、霓虹绿/红盈亏、**Space Grotesk + Inter + JetBrains Mono**。
 
+## 品牌资源
+
+- **`public/logo.svg`**：站点左上角与浏览器图标（favicon）使用同一矢量文件（源自品牌素材 `logo.svg`）。
+
 ## 技术栈
 
 - Next.js 14（App Router）+ TypeScript + Tailwind CSS  

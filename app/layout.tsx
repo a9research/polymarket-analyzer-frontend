@@ -25,6 +25,9 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "Polymarket Analyzer | Terminal",
   description: "Polymarket wallet analytics terminal",
+  icons: {
+    icon: "/logo.svg",
+  },
 };
 
 export default function RootLayout({
