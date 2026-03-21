@@ -1,9 +1,28 @@
 const DEFAULT_DEV_API = "http://127.0.0.1:3000";
 
+/** 使用同源代理时设为 `/api/backend`（见 README）；此时需配置服务端 ANALYZER_BACKEND_URL */
+const PROXY_SENTINELS = new Set(["/api/backend", "proxy", "PROXY"]);
+
+/**
+ * 返回 API 根：完整 URL（直连）或空字符串表示走 `/api/backend/*` 代理。
+ */
 export function getApiBaseUrl(): string {
   const v = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
+  if (v && PROXY_SENTINELS.has(v.replace(/\/$/, ""))) {
+    return "";
+  }
   if (v) return v.replace(/\/$/, "");
   return DEFAULT_DEV_API;
+}
+
+/** 构建请求 URL：直连 `https://host/analyze/...` 或代理 `/api/backend/analyze/...` */
+export function apiUrl(pathWithQuery: string): string {
+  const clean = pathWithQuery.replace(/^\//, "");
+  const base = getApiBaseUrl();
+  if (base === "") {
+    return `/api/backend/${clean}`;
+  }
+  return `${base}/${clean}`;
 }
 
 export type LeaderboardItem = {
@@ -22,8 +41,7 @@ export async function fetchLeaderboard(
   limit = 30,
   signal?: AbortSignal,
 ): Promise<LeaderboardItem[]> {
-  const base = getApiBaseUrl();
-  const res = await fetch(`${base}/leaderboard?limit=${limit}`, {
+  const res = await fetch(apiUrl(`leaderboard?limit=${limit}`), {
     signal,
     next: { revalidate: 60 },
   });
@@ -145,12 +163,14 @@ export async function fetchAnalyzeReport(
   wallet: string,
   opts?: { noCache?: boolean; signal?: AbortSignal },
 ): Promise<AnalyzeReport> {
-  const base = getApiBaseUrl();
   const q = opts?.noCache ? "?no_cache=true" : "";
-  const res = await fetch(`${base}/analyze/${encodeURIComponent(wallet)}${q}`, {
-    signal: opts?.signal,
-    cache: opts?.noCache ? "no-store" : "default",
-  });
+  const res = await fetch(
+    apiUrl(`analyze/${encodeURIComponent(wallet)}${q}`),
+    {
+      signal: opts?.signal,
+      cache: opts?.noCache ? "no-store" : "default",
+    },
+  );
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error((err as { error?: string }).error ?? `analyze ${res.status}`);

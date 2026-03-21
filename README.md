@@ -22,13 +22,30 @@
 
 ## 环境变量
 
-复制 `.env.example` → `.env.local`：
+复制 `.env.example` → `.env.local`。
+
+### 重要：Vercel（HTTPS）不能直连 `http://` 后端
+
+页面在 **`https://*.vercel.app`** 时，若 `NEXT_PUBLIC_API_BASE_URL=http://你的VPS:3000`，浏览器会拦截请求（**Mixed Content**：HTTPS 页禁止访问 HTTP 资源），控制台可见 `blocked:mixed-content`。
+
+**任选其一：**
+
+1. **给 Analyzer 配 HTTPS**（Nginx / Caddy + 证书），然后：
+   - `NEXT_PUBLIC_API_BASE_URL=https://api.你的域名.com`
+   - 后端 `PAA_CORS_ORIGINS` 包含你的 Vercel 前端源站。
+
+2. **同源代理（后端可继续用 HTTP）**  
+   - Vercel 环境变量：
+     - `NEXT_PUBLIC_API_BASE_URL=/api/backend`
+     - `ANALYZER_BACKEND_URL=http://VPS_IP:3000`（或内网地址；**不要**加 `NEXT_PUBLIC_`）  
+   - 浏览器只访问 `https://你的项目.vercel.app/api/backend/...`，由 Vercel 服务端转发到 VPS，**不再触发 Mixed Content**。  
+   - 此时代理与后端同源策略无关，一般**不必**再为浏览器配 CORS（仍建议生产上 HTTPS）。
+
+### 本地开发
 
 ```bash
 NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:3000
 ```
-
-生产环境指向 VPS 上 Analyzer 的 **HTTPS** 根 URL；后端需配置 **`PAA_CORS_ORIGINS`** 包含本站域名。
 
 ## 本地开发
 
@@ -46,4 +63,5 @@ npm run start
 
 ## Vercel
 
-导入本仓库，Framework Preset **Next.js**，在 Environment 中设置 `NEXT_PUBLIC_API_BASE_URL`。
+导入本仓库，Framework Preset **Next.js**。  
+若后端暂无 HTTPS：使用 **`NEXT_PUBLIC_API_BASE_URL=/api/backend`** + **`ANALYZER_BACKEND_URL=http://...`**（见上文）。
