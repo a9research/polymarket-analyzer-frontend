@@ -23,10 +23,10 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Polymarket Analyzer | Terminal",
-  description: "Polymarket wallet analytics terminal",
+  title: "ForeVex | Polymarket wallet analytics",
+  description: "Polymarket wallet analytics — leaderboard and account reports",
   icons: {
-    icon: "/logo.svg",
+    icon: [{ url: "/favicon.svg", type: "image/svg+xml" }],
   },
 };
 

@@ -37,13 +37,18 @@ export type LeaderboardResponse = {
   items: LeaderboardItem[];
 };
 
+export type LeaderboardPeriod = "all" | "today" | "week" | "month";
+
 export async function fetchLeaderboard(
   limit = 30,
-  signal?: AbortSignal,
+  opts?: { signal?: AbortSignal; period?: LeaderboardPeriod },
 ): Promise<LeaderboardItem[]> {
-  const res = await fetch(apiUrl(`leaderboard?limit=${limit}`), {
-    signal,
-    next: { revalidate: 60 },
+  const period = opts?.period ?? "all";
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (period !== "all") params.set("period", period);
+  const res = await fetch(apiUrl(`leaderboard?${params.toString()}`), {
+    signal: opts?.signal,
+    cache: "no-store",
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -155,6 +160,12 @@ export type AnalyzeReport = {
     display_name?: string | null;
     username?: string | null;
     avatar_url?: string | null;
+    /** ISO 8601，Gamma `createdAt` */
+    created_at?: string | null;
+    bio?: string | null;
+    verified_badge?: boolean | null;
+    proxy_wallet?: string | null;
+    x_username?: string | null;
   };
   notes: string[];
 };
