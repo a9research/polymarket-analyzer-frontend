@@ -323,6 +323,16 @@ export function AccountDashboard({
                 <Kpi
                   label={tr("account.kpiTrades")}
                   value={String(data.lifetime.total_trades)}
+                  hint={(() => {
+                    const fills = data.trades_fill_count ?? data.trades_count;
+                    if (fills > data.lifetime.total_trades) {
+                      return tr("account.kpiTradesFillsHint").replace(
+                        "{n}",
+                        String(fills),
+                      );
+                    }
+                    return undefined;
+                  })()}
                 />
                 <Kpi
                   label={tr("account.kpiVolume")}
@@ -657,10 +667,13 @@ function Kpi({
   label,
   value,
   valueClass,
+  hint,
 }: {
   label: string;
   value: string;
   valueClass?: string;
+  /** Secondary line (e.g. fill count under market count). */
+  hint?: string;
 }) {
   return (
     <div className="rounded-lg border border-white/5 bg-surface-container-low p-5 sm:p-6">
@@ -675,6 +688,11 @@ function Kpi({
       >
         {value}
       </div>
+      {hint ? (
+        <p className="mt-2 font-jetbrains text-[10px] leading-snug text-zinc-500">
+          {hint}
+        </p>
+      ) : null}
     </div>
   );
 }

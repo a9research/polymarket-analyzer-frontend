@@ -64,7 +64,10 @@ export async function fetchLeaderboard(
 export type AnalyzeReport = {
   schema_version: string;
   wallet: string;
+  /** Distinct slugs (Polymarket user-stats.trades style); 2.4+ */
   trades_count: number;
+  /** Raw /trades row count; 2.4+ */
+  trades_fill_count?: number;
   total_volume: number;
   data_fetch?: { truncated?: boolean; max_offset_allowed?: number | null };
   lifetime: {
