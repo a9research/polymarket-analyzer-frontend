@@ -159,6 +159,8 @@ export type AnalyzeReport = {
     }>;
     ai_copy_prompt: string;
   };
+  /** RFC3339 UTC — server sets on build; from PG `updated_at` when served from cache */
+  report_updated_at?: string | null;
   gamma_profile?: {
     display_name?: string | null;
     username?: string | null;
@@ -188,6 +190,29 @@ export async function fetchAnalyzeReport(
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error((err as { error?: string }).error ?? `analyze ${res.status}`);
+  }
+  return res.json() as Promise<AnalyzeReport>;
+}
+
+/**
+ * Fast path: Postgres cached report only (`GET ?cached_only=1`).
+ * Returns `null` on cache miss (404); does not run the full analyze pipeline.
+ */
+export async function fetchAnalyzeCachedOnly(
+  wallet: string,
+  opts?: { signal?: AbortSignal },
+): Promise<AnalyzeReport | null> {
+  const res = await fetch(
+    apiUrl(`analyze/${encodeURIComponent(wallet)}?cached_only=1`),
+    {
+      signal: opts?.signal,
+      cache: "no-store",
+    },
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error ?? `analyze cached ${res.status}`);
   }
   return res.json() as Promise<AnalyzeReport>;
 }

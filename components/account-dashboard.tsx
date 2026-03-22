@@ -1,18 +1,22 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import {
   BrainCircuit,
   ChevronDown,
   Copy,
   Loader2,
+  RefreshCw,
   Star,
   TriangleAlert,
 } from "lucide-react";
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import toast from "react-hot-toast";
-import { fetchAnalyzeReport } from "@/lib/api";
+import {
+  fetchAnalyzeCachedOnly,
+  fetchAnalyzeReport,
+} from "@/lib/api";
 import { useStaggeredReveal } from "@/hooks/use-staggered-reveal";
 import {
   mergeGammaProfileWithHint,
@@ -23,7 +27,6 @@ import { useI18n, type Locale } from "@/lib/i18n-context";
 import { useWatchlist } from "@/store/watchlist";
 import { cn } from "@/lib/cn";
 import {
-  AnalyzeBlockLoading,
   SkeletonHighlights,
   SkeletonKpiGrid,
   SkeletonPatterns,
@@ -59,6 +62,23 @@ function formatProfileJoinedAt(iso: string | null | undefined, loc: Locale) {
   }).format(new Date(t));
 }
 
+/** Report cache / build timestamp for display (date + time, UTC). */
+function formatReportUpdatedAt(iso: string | null | undefined, loc: Locale) {
+  if (!iso?.trim()) return null;
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return null;
+  return new Intl.DateTimeFormat(loc === "zh" ? "zh-CN" : "en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZone: "UTC",
+    hour12: false,
+  }).format(new Date(t));
+}
+
 function hourEntries(map: Record<string, number>) {
   const out: { h: number; c: number }[] = [];
   for (let h = 0; h < 24; h++) {
@@ -78,9 +98,11 @@ export function AccountDashboard({
   leaderboardProfileHint?: LeaderboardProfileHint | null;
 }) {
   const { t: tr, locale } = useI18n();
+  const queryClient = useQueryClient();
   const wallet = address.toLowerCase();
   const { add, remove, has } = useWatchlist();
   const watching = has(wallet);
+  const [manualRefreshBusy, setManualRefreshBusy] = useState(false);
 
   const publicProfileQ = useQuery({
     queryKey: ["public-profile", wallet],
@@ -88,12 +110,21 @@ export function AccountDashboard({
     staleTime: 5 * 60 * 1000,
   });
 
-  const analyzeQ = useQuery({
-    queryKey: ["analyze", wallet],
-    queryFn: ({ signal }) => fetchAnalyzeReport(wallet, { signal }),
+  /** Delivery: Postgres cache only (fast). */
+  const analyzeCachedQ = useQuery({
+    queryKey: ["analyze", wallet, "cached"],
+    queryFn: ({ signal }) => fetchAnalyzeCachedOnly(wallet, { signal }),
+    staleTime: 60 * 1000,
   });
 
-  const data = analyzeQ.data;
+  /** Full pipeline; runs in parallel — UI shows cached data first when available. */
+  const analyzeFullQ = useQuery({
+    queryKey: ["analyze", wallet],
+    queryFn: ({ signal }) => fetchAnalyzeReport(wallet, { signal }),
+    staleTime: 2 * 60 * 1000,
+  });
+
+  const data = analyzeFullQ.data ?? analyzeCachedQ.data ?? undefined;
   const gp = useMemo(
     () =>
       mergeGammaProfileWithHint(
@@ -120,7 +151,34 @@ export function AccountDashboard({
     }));
   }, [data]);
 
-  const analyzeReady = Boolean(analyzeQ.isSuccess && data);
+  const analyzeReady = Boolean(data);
+  const analyzePending =
+    !data && (analyzeCachedQ.isPending || analyzeFullQ.isPending);
+  const analyzeBackgroundFetch =
+    analyzeFullQ.isFetching && analyzeReady && !manualRefreshBusy;
+  const analyzeError =
+    analyzeFullQ.isError && !data
+      ? analyzeFullQ.error
+      : analyzeCachedQ.isError && !data
+        ? analyzeCachedQ.error
+        : null;
+
+  const onManualRefreshAnalyze = useCallback(async () => {
+    setManualRefreshBusy(true);
+    try {
+      await queryClient.fetchQuery({
+        queryKey: ["analyze", wallet],
+        queryFn: ({ signal }) =>
+          fetchAnalyzeReport(wallet, { noCache: true, signal }),
+      });
+      await queryClient.invalidateQueries({
+        queryKey: ["analyze", wallet, "cached"],
+      });
+    } finally {
+      setManualRefreshBusy(false);
+    }
+  }, [queryClient, wallet]);
+
   const staggerStep = useStaggeredReveal(analyzeReady, 6);
   const walletForCopy = data?.wallet ?? address;
   const joinedLabel = formatProfileJoinedAt(gp?.created_at ?? null, locale);
@@ -214,6 +272,21 @@ export function AccountDashboard({
               >
                 <Star className={cn("h-5 w-5", watching && "fill-secondary")} />
               </button>
+              <button
+                type="button"
+                onClick={() => void onManualRefreshAnalyze()}
+                disabled={manualRefreshBusy}
+                className={cn(
+                  "rounded p-1 transition-colors text-zinc-500 hover:text-primary",
+                  manualRefreshBusy && "pointer-events-none opacity-50",
+                )}
+                title={tr("account.refreshAnalyzeTitle")}
+                aria-label={tr("account.refreshAnalyzeTitle")}
+              >
+                <RefreshCw
+                  className={cn("h-5 w-5", manualRefreshBusy && "animate-spin")}
+                />
+              </button>
             </div>
             <button
               type="button"
@@ -274,20 +347,32 @@ export function AccountDashboard({
 
       <OfficialPolymarketUserPanel wallet={wallet} />
 
-      {analyzeQ.isFetching && analyzeReady && (
+      {analyzeReady && data ? (
+        <p className="font-jetbrains text-[10px] tracking-wide text-zinc-500">
+          <span className="text-zinc-600">{tr("account.reportUpdatedAt")}</span>{" "}
+          {formatReportUpdatedAt(data.report_updated_at, locale) ?? "—"}
+        </p>
+      ) : null}
+
+      {(analyzeBackgroundFetch || manualRefreshBusy) && analyzeReady && (
         <p className="font-jetbrains text-[10px] text-primary">
-          {tr("account.refreshing")}
+          {manualRefreshBusy
+            ? tr("account.refreshAnalyzeBusy")
+            : tr("account.refreshing")}
         </p>
       )}
 
-      {analyzeQ.isError && (
+      {analyzeError && (
         <div className="rounded-xl border border-error/30 bg-error-container/10 p-6 text-center">
           <p className="font-jetbrains text-sm text-error">
-            {(analyzeQ.error as Error)?.message ?? tr("account.loadError")}
+            {(analyzeError as Error)?.message ?? tr("account.loadError")}
           </p>
           <button
             type="button"
-            onClick={() => analyzeQ.refetch()}
+            onClick={() => {
+              void analyzeCachedQ.refetch();
+              void analyzeFullQ.refetch();
+            }}
             className="mt-4 rounded-sm bg-primary px-4 py-2 font-jetbrains text-xs font-bold text-on-primary"
           >
             {tr("account.retry")}
@@ -295,23 +380,21 @@ export function AccountDashboard({
         </div>
       )}
 
-      {analyzeQ.isPending && (
-        <div className="space-y-6">
-          <AnalyzeBlockLoading label={tr("account.loadingBlockKpi")} />
-          <AnalyzeBlockLoading
-            label={tr("account.loadingBlockDistribution")}
-            className="min-h-[10rem]"
+      {analyzePending && !analyzeError && (
+        <div className="rounded-xl border border-primary/20 bg-surface-container-low/90 px-6 py-10 text-center sm:px-10">
+          <Loader2
+            className="mx-auto mb-5 h-11 w-11 animate-spin text-primary"
+            aria-hidden
           />
-          <AnalyzeBlockLoading label={tr("account.loadingBlockPatterns")} />
-          <AnalyzeBlockLoading
-            label={tr("account.loadingBlockStrategy")}
-            className="min-h-[12rem]"
-          />
-          <AnalyzeBlockLoading label={tr("account.loadingBlockHighlights")} />
-          <div className="grid gap-6 sm:grid-cols-2">
-            <AnalyzeBlockLoading label={tr("account.loadingBlockPositions")} />
-            <AnalyzeBlockLoading label={tr("account.loadingBlockTrades")} />
-          </div>
+          <h2 className="font-headline text-lg font-bold tracking-tight text-white sm:text-xl">
+            {tr("account.firstAnalyzeTitle")}
+          </h2>
+          <p className="mx-auto mt-4 max-w-lg font-body text-sm leading-relaxed text-zinc-400">
+            {tr("account.firstAnalyzeBody")}
+          </p>
+          <p className="mx-auto mt-5 max-w-md font-jetbrains text-[10px] leading-relaxed text-zinc-600">
+            {tr("account.firstAnalyzeHint")}
+          </p>
         </div>
       )}
 
