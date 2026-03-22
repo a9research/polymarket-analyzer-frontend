@@ -53,7 +53,6 @@ export async function GET(req: NextRequest) {
   let res: Awaited<ReturnType<typeof fetchPolymarketUpstream>>;
   try {
     res = await fetchPolymarketUpstream(target, {
-      timeoutMs: 25_000,
       headers: {
         accept: "application/json",
         "user-agent": UPSTREAM_UA,

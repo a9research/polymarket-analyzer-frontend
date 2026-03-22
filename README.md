@@ -15,22 +15,18 @@
 - 中英 UI 文案：`messages/zh.json`、`messages/en.json` + `I18nProvider`（`localStorage` `paa-locale`）  
 - Recharts（已安装，图表可逐步替换占位组件）
 
-## Polymarket 官方数据（默认浏览器直连）
+## Polymarket 官方数据
 
-- **榜单**：`lib/polymarket-leaderboard.ts` 默认**浏览器直连** `https://data-api.polymarket.com/v1/leaderboard?…`。仅当 `NEXT_PUBLIC_POLYMARKET_LEADERBOARD_SERVER_PROXY=1` 时走 `/api/polymarket-leaderboard`（需 Node 能访问 data-api，否则 502）。
-- **公开资料**：`lib/polymarket-public-profile.ts` 默认请求 `https://gamma-api.polymarket.com/public-profile?address=…`。**localhost** 对 Gamma 常被 CORS 拦截，同上自动走 `/api/polymarket-public-profile`。
-- **user-stats / user-pnl**：`lib/polymarket-official-user-api.ts` — Data API `GET /v1/user-stats?proxyAddress=` + `user-pnl-api.polymarket.com/user-pnl?user_address=&interval=&fidelity=`（账户页区块，与自建 `analyze` 并行；说明见仓库 `docs/apii.md`）。
-
-若部署环境 **CORS 拦截** 或需 **仅服务端出网**，可设 **`NEXT_PUBLIC_POLYMARKET_LEADERBOARD_SERVER_PROXY=1`** / **`NEXT_PUBLIC_POLYMARKET_GAMMA_SERVER_PROXY=1`**，改走下方同源代理路由。
-
-**本地 dev：** 走 `/api/polymarket-*` 时由 **Node** 请求 Polymarket；若控制台出现 `ConnectTimeoutError` / 502，在 `.env.local` 配置 **`HTTPS_PROXY=http://127.0.0.1:端口`**（与 Clash / Sing-box 等 HTTP 代理端口一致，见 `lib/polymarket-upstream-fetch.ts`）。IPv4 优先已默认开启。
+- **榜单**：`lib/polymarket-leaderboard.ts` 默认**浏览器直连** `data-api`。仅当 `NEXT_PUBLIC_POLYMARKET_LEADERBOARD_SERVER_PROXY=1` 时走 `/api/polymarket-leaderboard`（Node 出网失败会 502；可配 `HTTPS_PROXY` 等，见 `.env.example`）。
+- **Gamma 公开资料**：`lib/polymarket-public-profile.ts` 默认经 **Analyzer 后端** `GET /gamma-public-profile/:wallet`（与 `GET /analyze/:wallet` **同一进程、同一出网路径**），**不依赖**本机 VPN / 系统代理 / Next `HTTPS_PROXY`。`NEXT_PUBLIC_POLYMARKET_GAMMA_USE_NEXT_PROXY=1` 时才改走 `/api/polymarket-public-profile`。
+- **user-stats / user-pnl**：`lib/polymarket-official-user-api.ts` — 浏览器直连（账户页；说明见 `docs/apii.md`）。
 
 ## 同源 API 代理（可选，无密钥）
 
 | 路径 | 说明 |
 |------|------|
-| `/api/polymarket-leaderboard` | Node 转发 Data API 榜单（见上，默认不用） |
-| `/api/polymarket-public-profile?address=0x…` | Node 转发 Gamma `public-profile`（见上，默认不用） |
+| `/api/polymarket-leaderboard` | Node 转发 Data API 榜单（默认不用） |
+| `/api/polymarket-public-profile?address=0x…` | Node 转发 Gamma（仅 `NEXT_PUBLIC_POLYMARKET_GAMMA_USE_NEXT_PROXY=1`） |
 
 ## 路由
 

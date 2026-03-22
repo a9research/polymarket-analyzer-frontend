@@ -1,13 +1,14 @@
 /**
- * 默认**浏览器直连** Gamma `GET /public-profile`（与官方 OpenAPI 一致）。
- * 文档：https://docs.polymarket.com/api-reference/profiles/get-public-profile-by-wallet-address
+ * Gamma `GET /public-profile`：默认经 **Analyzer 后端** `GET /gamma-public-profile/:wallet`
+ *（与 `/analyze` 同源出网，无需浏览器 CORS、无需本机 VPN/HTTPS_PROXY）。
  *
- * - `NEXT_PUBLIC_POLYMARKET_GAMMA_ORIGIN`：可选，默认 `https://gamma-api.polymarket.com`
- * - `NEXT_PUBLIC_POLYMARKET_GAMMA_SERVER_PROXY=1`：强制走本站 `/api/polymarket-public-profile`
- * - `=0`：即使 localhost 也不走代理（默认在 **localhost 浏览器** 下会自动走代理，避免 Gamma CORS）
+ * - `NEXT_PUBLIC_POLYMARKET_GAMMA_USE_NEXT_PROXY=1`：改走 Next `/api/polymarket-public-profile`（仅特殊部署）
+ * - `NEXT_PUBLIC_POLYMARKET_GAMMA_LEGACY_BROWSER_DIRECT=1`：浏览器直连 `gamma-api`（易 CORS 失败）
+ *
+ * 文档：https://docs.polymarket.com/api-reference/profiles/get-public-profile-by-wallet-address
  */
 
-import { shouldUsePolymarketServerProxyInBrowser } from "@/lib/polymarket-localhost-proxy";
+import { apiUrl } from "@/lib/api";
 
 export type PolymarketPublicProfileParsed = {
   displayName: string | null;
@@ -31,6 +32,11 @@ type GammaPublicProfileJson = {
   createdAt?: string | null;
   bio?: string | null;
 };
+
+function truthyEnv(v: string | undefined): boolean {
+  const s = v?.trim().toLowerCase();
+  return s === "1" || s === "true" || s === "yes";
+}
 
 export function parseGammaPublicProfile(
   j: GammaPublicProfileJson,
@@ -71,18 +77,20 @@ export function parseGammaPublicProfile(
 function publicProfileRequestUrl(wallet: string): string {
   const w = wallet.trim().toLowerCase();
   const q = `address=${encodeURIComponent(w)}`;
-  if (
-    shouldUsePolymarketServerProxyInBrowser(
-      process.env.NEXT_PUBLIC_POLYMARKET_GAMMA_SERVER_PROXY,
-    )
-  ) {
+
+  if (truthyEnv(process.env.NEXT_PUBLIC_POLYMARKET_GAMMA_USE_NEXT_PROXY)) {
     return `/api/polymarket-public-profile?${q}`;
   }
-  const origin = (
-    process.env.NEXT_PUBLIC_POLYMARKET_GAMMA_ORIGIN?.trim() ||
-    "https://gamma-api.polymarket.com"
-  ).replace(/\/$/, "");
-  return `${origin}/public-profile?${q}`;
+
+  if (truthyEnv(process.env.NEXT_PUBLIC_POLYMARKET_GAMMA_LEGACY_BROWSER_DIRECT)) {
+    const origin = (
+      process.env.NEXT_PUBLIC_POLYMARKET_GAMMA_ORIGIN?.trim() ||
+      "https://gamma-api.polymarket.com"
+    ).replace(/\/$/, "");
+    return `${origin}/public-profile?${q}`;
+  }
+
+  return apiUrl(`gamma-public-profile/${encodeURIComponent(w)}`);
 }
 
 export async function fetchPolymarketPublicProfile(
