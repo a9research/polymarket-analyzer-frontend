@@ -17,11 +17,13 @@
 
 ## Polymarket 官方数据（默认浏览器直连）
 
-- **榜单**：`lib/polymarket-leaderboard.ts` 默认请求 `https://data-api.polymarket.com/v1/leaderboard?…`（用户浏览器 → 官方）。
-- **公开资料**：`lib/polymarket-public-profile.ts` 默认请求 `https://gamma-api.polymarket.com/public-profile?address=…`。
+- **榜单**：`lib/polymarket-leaderboard.ts` 默认**浏览器直连** `https://data-api.polymarket.com/v1/leaderboard?…`。仅当 `NEXT_PUBLIC_POLYMARKET_LEADERBOARD_SERVER_PROXY=1` 时走 `/api/polymarket-leaderboard`（需 Node 能访问 data-api，否则 502）。
+- **公开资料**：`lib/polymarket-public-profile.ts` 默认请求 `https://gamma-api.polymarket.com/public-profile?address=…`。**localhost** 对 Gamma 常被 CORS 拦截，同上自动走 `/api/polymarket-public-profile`。
 - **user-stats / user-pnl**：`lib/polymarket-official-user-api.ts` — Data API `GET /v1/user-stats?proxyAddress=` + `user-pnl-api.polymarket.com/user-pnl?user_address=&interval=&fidelity=`（账户页区块，与自建 `analyze` 并行；说明见仓库 `docs/apii.md`）。
 
 若部署环境 **CORS 拦截** 或需 **仅服务端出网**，可设 **`NEXT_PUBLIC_POLYMARKET_LEADERBOARD_SERVER_PROXY=1`** / **`NEXT_PUBLIC_POLYMARKET_GAMMA_SERVER_PROXY=1`**，改走下方同源代理路由。
+
+**本地 dev：** 走 `/api/polymarket-*` 时由 **Node** 请求 Polymarket；若控制台出现 `ConnectTimeoutError` / 502，在 `.env.local` 配置 **`HTTPS_PROXY=http://127.0.0.1:端口`**（与 Clash / Sing-box 等 HTTP 代理端口一致，见 `lib/polymarket-upstream-fetch.ts`）。IPv4 优先已默认开启。
 
 ## 同源 API 代理（可选，无密钥）
 

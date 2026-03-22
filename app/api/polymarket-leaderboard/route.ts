@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { fetchPolymarketUpstream } from "@/lib/polymarket-upstream-fetch";
 
 export const dynamic = "force-dynamic";
 
@@ -49,17 +50,14 @@ export async function GET(req: NextRequest) {
   if (!qs.has("category")) qs.set("category", "OVERALL");
 
   const target = `${upstreamBase()}/v1/leaderboard?${qs.toString()}`;
-  let res: Response;
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 25_000);
+  let res: Awaited<ReturnType<typeof fetchPolymarketUpstream>>;
   try {
-    res = await fetch(target, {
+    res = await fetchPolymarketUpstream(target, {
+      timeoutMs: 25_000,
       headers: {
         accept: "application/json",
         "user-agent": UPSTREAM_UA,
       },
-      cache: "no-store",
-      signal: ctrl.signal,
     });
   } catch (e) {
     if (process.env.NODE_ENV === "development") {
@@ -68,12 +66,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(
       {
         error: `upstream_unavailable: ${formatFetchError(e)}`,
-        hint: "Node 无法访问 data-api.polymarket.com 时常见：网络/防火墙/地区限制。可设 HTTPS_PROXY、POLYMARKET_DATA_API_ORIGIN（反代），或 NEXT_PUBLIC_POLYMARKET_LEADERBOARD_URL 让浏览器直连。",
+        hint: "Node 无法访问 data-api 时：在 .env.local 设 HTTPS_PROXY（与本地代理端口一致）、或 POLYMARKET_DATA_API_ORIGIN 反代；勿开 LEADERBOARD_SERVER_PROXY 时可浏览器直连。",
       },
       { status: 502 },
     );
-  } finally {
-    clearTimeout(t);
   }
 
   const text = await res.text();

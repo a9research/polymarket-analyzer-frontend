@@ -66,10 +66,10 @@ function truthyEnv(v: string | undefined): boolean {
 }
 
 /**
- * 默认**浏览器直连** Data API `GET /v1/leaderboard`（官方域名，需对方 CORS 允许）。
+ * 默认**浏览器直连** Data API `GET /v1/leaderboard`（多数环境下 CORS 可用，含 localhost）。
  *
  * - `NEXT_PUBLIC_POLYMARKET_LEADERBOARD_URL`：可选，覆盖完整 base（默认即官方 URL）
- * - `NEXT_PUBLIC_POLYMARKET_LEADERBOARD_SERVER_PROXY=1`：强制走本站 `/api/polymarket-leaderboard`（Node 代拉，适用于浏览器被 CORS 拦截或仅需服务端出网时）
+ * - `NEXT_PUBLIC_POLYMARKET_LEADERBOARD_SERVER_PROXY=1`：走本站 `/api/polymarket-leaderboard`（需 **Node 能访问** data-api；否则会 502）
  */
 export async function fetchPolymarketLeaderboard(
   opts: {

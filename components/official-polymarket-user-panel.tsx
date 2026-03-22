@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -71,6 +71,96 @@ function chartRows(points: PolymarketOfficialPnlPoint[], loc: Locale) {
       { month: "short", day: "numeric" },
     ),
   }));
+}
+
+type OfficialPnlChartRow = ReturnType<typeof chartRows>[number];
+
+const OFFICIAL_PNL_CHART_H = 220;
+
+/** Recharts 在 flex/grid 首帧常量到 width=-1；先 ResizeObserver 再给出数值宽高。 */
+function OfficialPnlAreaChart({
+  chartData,
+  locale,
+}: {
+  chartData: OfficialPnlChartRow[];
+  locale: Locale;
+}) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [cw, setCw] = useState(0);
+
+  useLayoutEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const apply = () => {
+      const w = Math.max(0, Math.floor(el.getBoundingClientRect().width));
+      setCw((prev) => (prev === w ? prev : w));
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  return (
+    <div
+      ref={wrapRef}
+      className="w-full min-w-0"
+      style={{ height: OFFICIAL_PNL_CHART_H, minHeight: OFFICIAL_PNL_CHART_H }}
+    >
+      {cw > 0 ? (
+        <ResponsiveContainer width={cw} height={OFFICIAL_PNL_CHART_H} debounce={50}>
+          <AreaChart
+            data={chartData}
+            margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
+          >
+            <defs>
+              <linearGradient id="officialPnlFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="rgb(133, 173, 255)" stopOpacity={0.35} />
+                <stop offset="100%" stopColor="rgb(133, 173, 255)" stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+            <XAxis
+              dataKey="label"
+              tick={{ fill: "#71717a", fontSize: 10 }}
+              axisLine={{ stroke: "rgba(255,255,255,0.1)" }}
+              interval="preserveStartEnd"
+            />
+            <YAxis
+              tick={{ fill: "#71717a", fontSize: 10 }}
+              axisLine={{ stroke: "rgba(255,255,255,0.1)" }}
+              tickFormatter={(v) => fmtCompactUsd(Number(v), locale)}
+              width={56}
+            />
+            <Tooltip
+              contentStyle={{
+                background: "#171717",
+                border: "1px solid rgba(255,255,255,0.1)",
+                borderRadius: 8,
+                fontSize: 12,
+              }}
+              labelStyle={{ color: "#a1a1aa" }}
+              formatter={(value) =>
+                fmtCompactUsd(value == null ? 0 : Number(value), locale)
+              }
+            />
+            <Area
+              type="monotone"
+              dataKey="pnl"
+              stroke="rgb(133, 173, 255)"
+              strokeWidth={2}
+              fill="url(#officialPnlFill)"
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      ) : (
+        <div
+          className="flex h-full w-full items-center justify-center rounded-lg border border-white/5 bg-black/10"
+          aria-hidden
+        />
+      )}
+    </div>
+  );
 }
 
 /**
@@ -230,7 +320,7 @@ export function OfficialPolymarketUserPanel({ wallet }: { wallet: string }) {
           )}
         </div>
 
-        <div className="min-h-0">
+        <div className="min-h-0 min-w-0">
           <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-wrap gap-1.5">
               {RANGE_TABS.map((tab) => {
@@ -285,56 +375,7 @@ export function OfficialPolymarketUserPanel({ wallet }: { wallet: string }) {
               {t("account.officialPnlEmpty")}
             </p>
           ) : (
-            <div className="h-[220px] w-full min-w-0">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart
-                  data={chartData}
-                  margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
-                >
-                  <defs>
-                    <linearGradient id="officialPnlFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="rgb(133, 173, 255)" stopOpacity={0.35} />
-                      <stop offset="100%" stopColor="rgb(133, 173, 255)" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-                  <XAxis
-                    dataKey="label"
-                    tick={{ fill: "#71717a", fontSize: 10 }}
-                    axisLine={{ stroke: "rgba(255,255,255,0.1)" }}
-                    interval="preserveStartEnd"
-                  />
-                  <YAxis
-                    tick={{ fill: "#71717a", fontSize: 10 }}
-                    axisLine={{ stroke: "rgba(255,255,255,0.1)" }}
-                    tickFormatter={(v) => fmtCompactUsd(Number(v), locale)}
-                    width={56}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      background: "#171717",
-                      border: "1px solid rgba(255,255,255,0.1)",
-                      borderRadius: 8,
-                      fontSize: 12,
-                    }}
-                    labelStyle={{ color: "#a1a1aa" }}
-                    formatter={(value) =>
-                      fmtCompactUsd(
-                        value == null ? 0 : Number(value),
-                        locale,
-                      )
-                    }
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="pnl"
-                    stroke="rgb(133, 173, 255)"
-                    strokeWidth={2}
-                    fill="url(#officialPnlFill)"
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
+            <OfficialPnlAreaChart chartData={chartData} locale={locale} />
           )}
         </div>
       </div>

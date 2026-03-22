@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ANALYZE_WALLET_RE } from "@/lib/evm-wallet";
+import { fetchPolymarketUpstream } from "@/lib/polymarket-upstream-fetch";
 
 export const dynamic = "force-dynamic";
 
@@ -32,17 +33,14 @@ export async function GET(req: NextRequest) {
   }
 
   const target = `${gammaBase()}/public-profile?address=${encodeURIComponent(address)}`;
-  let res: Response;
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 20_000);
+  let res: Awaited<ReturnType<typeof fetchPolymarketUpstream>>;
   try {
-    res = await fetch(target, {
+    res = await fetchPolymarketUpstream(target, {
+      timeoutMs: 25_000,
       headers: {
         accept: "application/json",
         "user-agent": UPSTREAM_UA,
       },
-      cache: "no-store",
-      signal: ctrl.signal,
     });
   } catch (e) {
     if (process.env.NODE_ENV === "development") {
@@ -51,12 +49,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(
       {
         error: `upstream_unavailable: ${formatFetchError(e)}`,
-        hint: "检查网络或配置 POLYMARKET_GAMMA_ORIGIN（反代到 gamma-api.polymarket.com）。",
+        hint:
+          "Node 访问 gamma-api 超时或被墙：在 .env.local 设 HTTPS_PROXY=http://127.0.0.1:端口（与浏览器代理一致），或配置 POLYMARKET_GAMMA_ORIGIN 反代；也可设 NEXT_PUBLIC_POLYMARKET_GAMMA_SERVER_PROXY=0 改浏览器直连（可能 CORS）。",
       },
       { status: 502 },
     );
-  } finally {
-    clearTimeout(t);
   }
 
   const text = await res.text();
