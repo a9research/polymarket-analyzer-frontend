@@ -43,6 +43,12 @@ export async function GET(
     );
   }
 
+  // 204 No Content：WebIDL 要求 body 为 null；`new NextResponse("")` 会触发 undici「Invalid response status code 204」
+  if (res.status === 204) {
+    await res.text();
+    return new NextResponse(null, { status: 204 });
+  }
+
   const text = await res.text();
   return new NextResponse(text, {
     status: res.status,

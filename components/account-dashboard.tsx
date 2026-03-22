@@ -79,6 +79,37 @@ function formatReportUpdatedAt(iso: string | null | undefined, loc: Locale) {
   }).format(new Date(t));
 }
 
+const LEDGER_UI_MAX = 400;
+
+function fmtLedgerTs(tsMs: number, loc: Locale) {
+  return new Intl.DateTimeFormat(loc === "zh" ? "zh-CN" : "en-US", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZone: "UTC",
+    hour12: false,
+  }).format(new Date(tsMs));
+}
+
+function fmtLedgerScalar(n: number, kind: "price" | "qty") {
+  if (Math.abs(n) < 1e-12) return "—";
+  const max = kind === "price" ? 4 : 2;
+  return n.toLocaleString("en-US", {
+    maximumFractionDigits: max,
+    minimumFractionDigits: 0,
+  });
+}
+
+function ledgerKindLabel(kind: string, t: (k: string) => string) {
+  if (kind === "BUY") return t("account.ledgerKindBUY");
+  if (kind === "SELL") return t("account.ledgerKindSELL");
+  if (kind === "SETTLEMENT") return t("account.ledgerKindSETTLEMENT");
+  return kind;
+}
+
 function hourEntries(map: Record<string, number>) {
   const out: { h: number; c: number }[] = [];
   for (let h = 0; h < 24; h++) {
@@ -184,6 +215,13 @@ export function AccountDashboard({
   const joinedLabel = formatProfileJoinedAt(gp?.created_at ?? null, locale);
   const xHandle = gp?.x_username?.trim().replace(/^@/, "") ?? "";
   const fe = data?.frontend;
+  const ledgerSlice = useMemo(() => {
+    const raw = fe?.trade_ledger;
+    if (!raw?.length) return null;
+    const total = raw.length;
+    const rows = raw.slice(-LEDGER_UI_MAX);
+    return { total, rows };
+  }, [fe?.trade_ledger]);
   const truncated = data?.data_fetch?.truncated;
   const titlePrimary =
     gp?.display_name || gp?.username || shortAddr(wallet);
@@ -428,6 +466,17 @@ export function AccountDashboard({
                     data.lifetime.net_pnl >= 0
                       ? "text-secondary"
                       : "text-tertiary"
+                  }
+                  hint={
+                    data.lifetime.net_pnl_settlement != null &&
+                    Math.abs(data.lifetime.net_pnl_settlement) > 1e-9
+                      ? tr("account.kpiPnlSettlementHint").replace(
+                          "{s}",
+                          fmtUsd(data.lifetime.net_pnl_settlement, {
+                            signed: true,
+                          }),
+                        )
+                      : undefined
                   }
                 />
                 <Kpi
@@ -725,6 +774,56 @@ export function AccountDashboard({
                       ))}
                     </ul>
                   </div>
+                </div>
+              )}
+
+              {ledgerSlice && (
+                <div className="space-y-2">
+                  <p className="font-jetbrains text-[10px] uppercase tracking-widest text-zinc-600">
+                    {tr("account.ledgerSource")}
+                  </p>
+                  <DataTable
+                    title={tr("account.ledgerTitle")}
+                    badge={
+                      ledgerSlice.total > LEDGER_UI_MAX
+                        ? tr("account.ledgerBadgeTruncated")
+                            .replace("{shown}", String(LEDGER_UI_MAX))
+                            .replace("{total}", String(ledgerSlice.total))
+                        : `${ledgerSlice.total}`
+                    }
+                    columns={[
+                      tr("account.colTime"),
+                      tr("account.colSlug"),
+                      tr("account.colKind"),
+                      tr("account.colOutcome"),
+                      tr("account.colBuyShares"),
+                      tr("account.colBuyPrice"),
+                      tr("account.colBuyTotal"),
+                      tr("account.colSellPrice"),
+                      tr("account.colSellTotal"),
+                      tr("account.colPnl"),
+                    ]}
+                    rows={ledgerSlice.rows.map((row) => ({
+                      cells: [
+                        fmtLedgerTs(row.ts_ms, locale),
+                        row.title || row.slug || "—",
+                        ledgerKindLabel(row.row_kind, tr),
+                        row.outcome?.trim() || "—",
+                        fmtLedgerScalar(row.size, "qty"),
+                        fmtLedgerScalar(row.buy_price, "price"),
+                        row.buy_total !== 0
+                          ? fmtUsd(row.buy_total)
+                          : "—",
+                        fmtLedgerScalar(row.sell_price, "price"),
+                        row.sell_total !== 0
+                          ? fmtUsd(row.sell_total)
+                          : "—",
+                        row.pnl !== 0
+                          ? fmtUsd(row.pnl, { signed: true })
+                          : "—",
+                      ],
+                    }))}
+                  />
                 </div>
               )}
             </>

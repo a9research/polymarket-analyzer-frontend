@@ -74,6 +74,8 @@ export type AnalyzeReport = {
     total_trades: number;
     total_volume: number;
     net_pnl: number;
+    /** 2.5+ Gamma 已结算市场、未卖出份额的结算盈亏分项 */
+    net_pnl_settlement?: number;
     open_position_value: number;
     max_single_win: number;
     max_single_loss: number;
@@ -147,6 +149,21 @@ export type AnalyzeReport = {
       timestamp: number;
       title?: string | null;
     }>;
+    /** Chronological BUY / SELL (per Data API fill) + SETTLEMENT synthetic rows. */
+    trade_ledger?: Array<{
+      ts_ms: number;
+      slug: string;
+      condition_id: string;
+      outcome?: string | null;
+      row_kind: string;
+      size: number;
+      buy_price: number;
+      buy_total: number;
+      sell_price: number;
+      sell_total: number;
+      pnl: number;
+      title?: string | null;
+    }>;
     current_positions: Array<{
       slug?: string | null;
       title?: string | null;
@@ -195,21 +212,22 @@ export async function fetchAnalyzeReport(
 }
 
 /**
- * Fast path: Postgres cached report only (`GET ?cached_only=1`).
- * Returns `null` on cache miss (404); does not run the full analyze pipeline.
+ * Fast path: Postgres cached report only (`GET ?cached_only=true`).
+ * Axum/serde expects boolean as `true`/`false`, not `1`.
+ * Returns `null` on cache miss (204 No Content；旧后端可能仍返回 404)。
  */
 export async function fetchAnalyzeCachedOnly(
   wallet: string,
   opts?: { signal?: AbortSignal },
 ): Promise<AnalyzeReport | null> {
   const res = await fetch(
-    apiUrl(`analyze/${encodeURIComponent(wallet)}?cached_only=1`),
+    apiUrl(`analyze/${encodeURIComponent(wallet)}?cached_only=true`),
     {
       signal: opts?.signal,
       cache: "no-store",
     },
   );
-  if (res.status === 404) return null;
+  if (res.status === 204 || res.status === 404) return null;
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error((err as { error?: string }).error ?? `analyze cached ${res.status}`);
