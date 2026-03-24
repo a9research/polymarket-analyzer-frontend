@@ -18,7 +18,8 @@
 ## Polymarket 官方数据
 
 - **榜单**：`lib/polymarket-leaderboard.ts` 默认**浏览器直连** `data-api`。仅当 `NEXT_PUBLIC_POLYMARKET_LEADERBOARD_SERVER_PROXY=1` 时走 `/api/polymarket-leaderboard`（Node 出网失败会 502；可配 `HTTPS_PROXY` 等，见 `.env.example`）。
-- **Gamma 公开资料**：`lib/polymarket-public-profile.ts` 默认经 **Analyzer 后端** `GET /gamma-public-profile/:wallet`（与 `GET /analyze/:wallet` **同一进程、同一出网路径**），**不依赖**本机 VPN / 系统代理 / Next `HTTPS_PROXY`。`NEXT_PUBLIC_POLYMARKET_GAMMA_USE_NEXT_PROXY=1` 时才改走 `/api/polymarket-public-profile`。
+- **Gamma 公开资料**：默认 **Next `/api/polymarket-public-profile`** 服务端转发 gamma-api（**避免 CORS**）。Node 出站优先 **无自定义 Agent 的 undici `fetch`**，失败再回退带 **`HTTPS_PROXY`** 的路径；若仍 **502**，多为本机 Node 出网与浏览器不一致，见 `.env.example` 中 **`HTTPS_PROXY`** / **`POLYMARKET_UPSTREAM_*`**。可选 **`NEXT_PUBLIC_POLYMARKET_GAMMA_BROWSER_DIRECT=1`** 尝试浏览器直连（多数环境会 CORS 失败）。
+- **账户页 · 官方三接口**：`public-profile` 同上；**Data API** `positions` / `closed-positions` 仍浏览器直连（一般允许 CORS）。可选 `NEXT_PUBLIC_POLYMARKET_DATA_API_ORIGIN` / `NEXT_PUBLIC_POLYMARKET_GAMMA_ORIGIN`。
 - **user-stats / user-pnl**：`lib/polymarket-official-user-api.ts` — 浏览器直连（账户页；说明见 `docs/apii.md`）。
 
 ## 同源 API 代理（可选，无密钥）
@@ -26,7 +27,7 @@
 | 路径 | 说明 |
 |------|------|
 | `/api/polymarket-leaderboard` | Node 转发 Data API 榜单（默认不用） |
-| `/api/polymarket-public-profile?address=0x…` | Node 转发 Gamma（仅 `NEXT_PUBLIC_POLYMARKET_GAMMA_USE_NEXT_PROXY=1`） |
+| `/api/polymarket-public-profile?address=0x…` | Node 转发 Gamma **`public-profile`**（默认使用，避免 CORS） |
 
 ## 路由
 
@@ -95,4 +96,4 @@ npm run start
 导入本仓库，Framework Preset **Next.js**。  
 若后端暂无 HTTPS：使用 **`NEXT_PUBLIC_API_BASE_URL=/api/backend`** + **`ANALYZER_BACKEND_URL=http://...`**（见上文）。
 
-榜单与 Gamma 资料已默认**浏览器直连**官方域名；不稳定时可改 **`NEXT_PUBLIC_POLYMARKET_LEADERBOARD_URL`** / **`NEXT_PUBLIC_POLYMARKET_GAMMA_ORIGIN`** 为反代，或开启 **`NEXT_PUBLIC_*_SERVER_PROXY=1`** 走 Vercel 服务端转发。
+榜单仍默认**浏览器直连** Data API；**Gamma 公开资料**默认走 **`/api/polymarket-public-profile`**。不稳定时可改 **`NEXT_PUBLIC_POLYMARKET_LEADERBOARD_URL`** 或榜单 **`NEXT_PUBLIC_POLYMARKET_LEADERBOARD_SERVER_PROXY=1`**；Gamma 上游可在服务端设 **`POLYMARKET_GAMMA_ORIGIN`** 反代。

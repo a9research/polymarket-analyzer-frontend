@@ -37,6 +37,59 @@ export type LeaderboardResponse = {
   items: LeaderboardItem[];
 };
 
+/** 与后端 `TradeLedgerRow` 一致 */
+export type TradeLedgerRow = {
+  ts_ms: number;
+  slug: string;
+  condition_id: string;
+  outcome?: string | null;
+  row_kind: string;
+  size: number;
+  buy_price: number;
+  buy_total: number;
+  sell_price: number;
+  sell_total: number;
+  pnl: number;
+  title?: string | null;
+};
+
+/** 2.5.4+：证明 paired 视图 = 全表去掉 BUY，Σpnl 一致 */
+/** 与后端 `PositionMarketPick` 一致 — 用于按市场拉 `/position-activity` */
+export type PositionMarketPick = {
+  condition_id: string;
+  slug?: string | null;
+  title?: string | null;
+  outcome?: string | null;
+  status: string;
+  size?: number | null;
+  avg_price?: number | null;
+  cash_pnl?: number | null;
+  realized_pnl?: number | null;
+  current_value?: number | null;
+};
+
+export type PositionActivityResponse = {
+  wallet: string;
+  market: string;
+  activity_count: number;
+  max_timestamp_sec: number;
+  incremental_from_cache: boolean;
+  no_cache: boolean;
+  postgres: boolean;
+  activities: unknown[];
+};
+
+export type TradeLedgerIntegrity = {
+  full_row_count: number;
+  buy_row_count: number;
+  sell_row_count: number;
+  settlement_row_count: number;
+  paired_row_count: number;
+  sum_pnl_full: number;
+  sum_pnl_paired: number;
+  integrity_ok: boolean;
+};
+
 export type LeaderboardPeriod = "all" | "today" | "week" | "month";
 
 export async function fetchLeaderboard(
@@ -60,9 +113,18 @@ export async function fetchLeaderboard(
   return data.items ?? [];
 }
 
+/** 与后端 `DataLineage` 对齐（账户管线常见 `analytics_primary_source: data_api_positions`） */
+export type DataLineage = {
+  analytics_primary_source: string;
+  canonical_merge_applied?: boolean;
+  markets_dim_enriched?: boolean;
+};
+
 // Minimal report typing — 与后端 AnalyzeReport 对齐时可逐步扩充
 export type AnalyzeReport = {
   schema_version: string;
+  /** `account` = 持仓 + 已平仓 + Gamma，无 analyze 内全量 /trades */
+  analysis_pipeline?: string | null;
   wallet: string;
   /** Distinct slugs (Polymarket user-stats.trades style); 2.4+ */
   trades_count: number;
@@ -150,20 +212,10 @@ export type AnalyzeReport = {
       title?: string | null;
     }>;
     /** Chronological BUY / SELL (per Data API fill) + SETTLEMENT synthetic rows. */
-    trade_ledger?: Array<{
-      ts_ms: number;
-      slug: string;
-      condition_id: string;
-      outcome?: string | null;
-      row_kind: string;
-      size: number;
-      buy_price: number;
-      buy_total: number;
-      sell_price: number;
-      sell_total: number;
-      pnl: number;
-      title?: string | null;
-    }>;
+    trade_ledger?: TradeLedgerRow[];
+    /** 2.5.3+：仅 SELL + SETTLEMENT，每行均有已实现 pnl（均价法退出侧）。 */
+    trade_ledger_paired?: TradeLedgerRow[];
+    trade_ledger_integrity?: TradeLedgerIntegrity | null;
     current_positions: Array<{
       slug?: string | null;
       title?: string | null;
@@ -173,11 +225,15 @@ export type AnalyzeReport = {
       cur_price?: number | null;
       cash_pnl?: number | null;
       current_value?: number | null;
+      condition_id?: string | null;
     }>;
+    /** 去重后的市场列表（open + closed），供选择 condition id */
+    position_markets?: PositionMarketPick[];
     ai_copy_prompt: string;
   };
   /** RFC3339 UTC — server sets on build; from PG `updated_at` when served from cache */
   report_updated_at?: string | null;
+  data_lineage?: DataLineage | null;
   gamma_profile?: {
     display_name?: string | null;
     username?: string | null;
@@ -194,9 +250,12 @@ export type AnalyzeReport = {
 
 export async function fetchAnalyzeReport(
   wallet: string,
-  opts?: { noCache?: boolean; signal?: AbortSignal },
+  opts?: { noCache?: boolean; noGamma?: boolean; signal?: AbortSignal },
 ): Promise<AnalyzeReport> {
-  const q = opts?.noCache ? "?no_cache=true" : "";
+  const params = new URLSearchParams();
+  if (opts?.noCache) params.set("no_cache", "true");
+  if (opts?.noGamma) params.set("no_gamma", "true");
+  const q = params.toString() ? `?${params.toString()}` : "";
   const res = await fetch(
     apiUrl(`analyze/${encodeURIComponent(wallet)}${q}`),
     {
@@ -218,10 +277,14 @@ export async function fetchAnalyzeReport(
  */
 export async function fetchAnalyzeCachedOnly(
   wallet: string,
-  opts?: { signal?: AbortSignal },
+  opts?: { signal?: AbortSignal; noGamma?: boolean },
 ): Promise<AnalyzeReport | null> {
+  const params = new URLSearchParams({ cached_only: "true" });
+  if (opts?.noGamma) params.set("no_gamma", "true");
   const res = await fetch(
-    apiUrl(`analyze/${encodeURIComponent(wallet)}?cached_only=true`),
+    apiUrl(
+      `analyze/${encodeURIComponent(wallet)}?${params.toString()}`,
+    ),
     {
       signal: opts?.signal,
       cache: "no-store",
@@ -233,4 +296,32 @@ export async function fetchAnalyzeCachedOnly(
     throw new Error((err as { error?: string }).error ?? `analyze cached ${res.status}`);
   }
   return res.json() as Promise<AnalyzeReport>;
+}
+
+/** `GET /position-activity/:wallet?market=<condition_id>` */
+export async function fetchPositionActivity(
+  wallet: string,
+  marketConditionId: string,
+  opts?: { signal?: AbortSignal; noCache?: boolean },
+): Promise<PositionActivityResponse> {
+  const params = new URLSearchParams({
+    market: marketConditionId.trim(),
+  });
+  if (opts?.noCache) params.set("no_cache", "true");
+  const res = await fetch(
+    apiUrl(
+      `position-activity/${encodeURIComponent(wallet)}?${params.toString()}`,
+    ),
+    {
+      signal: opts?.signal,
+      cache: "no-store",
+    },
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(
+      (err as { error?: string }).error ?? `position-activity ${res.status}`,
+    );
+  }
+  return res.json() as Promise<PositionActivityResponse>;
 }

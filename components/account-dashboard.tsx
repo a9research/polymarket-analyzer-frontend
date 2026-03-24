@@ -16,7 +16,9 @@ import toast from "react-hot-toast";
 import {
   fetchAnalyzeCachedOnly,
   fetchAnalyzeReport,
+  type TradeLedgerRow,
 } from "@/lib/api";
+import { PositionMarketActivityPanel } from "@/components/position-market-activity-panel";
 import { useStaggeredReveal } from "@/hooks/use-staggered-reveal";
 import {
   mergeGammaProfileWithHint,
@@ -35,6 +37,7 @@ import {
   SkeletonThreeCol,
 } from "@/components/account-dashboard-skeletons";
 import { OfficialPolymarketUserPanel } from "@/components/official-polymarket-user-panel";
+import { OfficialPolymarketWalletApisPanel } from "@/components/official-polymarket-wallet-apis-panel";
 
 function fmtUsd(n: number, opts?: { signed?: boolean }) {
   const sign =
@@ -94,8 +97,15 @@ function fmtLedgerTs(tsMs: number, loc: Locale) {
   }).format(new Date(tsMs));
 }
 
-function fmtLedgerScalar(n: number, kind: "price" | "qty") {
-  if (Math.abs(n) < 1e-12) return "—";
+/**
+ * @param treatZeroAsDash — 为 true 时把 0 显示为「—」（用于「本行无此侧」）；结算/卖出行对真实 0 价应传 false。
+ */
+function fmtLedgerScalar(
+  n: number,
+  kind: "price" | "qty",
+  treatZeroAsDash = true,
+) {
+  if (treatZeroAsDash && Math.abs(n) < 1e-12) return "—";
   const max = kind === "price" ? 4 : 2;
   return n.toLocaleString("en-US", {
     maximumFractionDigits: max,
@@ -108,6 +118,36 @@ function ledgerKindLabel(kind: string, t: (k: string) => string) {
   if (kind === "SELL") return t("account.ledgerKindSELL");
   if (kind === "SETTLEMENT") return t("account.ledgerKindSETTLEMENT");
   return kind;
+}
+
+function tradeLedgerRowsToDataCells(
+  rows: TradeLedgerRow[],
+  locale: Locale,
+  tr: (k: string) => string,
+): { cells: string[] }[] {
+  return rows.map((row) => {
+    const isBuy = row.row_kind === "BUY";
+    return {
+      cells: [
+        fmtLedgerTs(row.ts_ms, locale),
+        row.title || row.slug || "—",
+        ledgerKindLabel(row.row_kind, tr),
+        row.outcome?.trim() || "—",
+        fmtLedgerScalar(row.size, "qty"),
+        fmtLedgerScalar(row.buy_price, "price"),
+        row.buy_total !== 0 ? fmtUsd(row.buy_total) : "—",
+        isBuy
+          ? "—"
+          : fmtLedgerScalar(row.sell_price, "price", false),
+        isBuy ? "—" : fmtUsd(row.sell_total),
+        isBuy
+          ? row.pnl !== 0
+            ? fmtUsd(row.pnl, { signed: true })
+            : "—"
+          : fmtUsd(row.pnl, { signed: true }),
+      ],
+    };
+  });
 }
 
 function hourEntries(map: Record<string, number>) {
@@ -134,6 +174,8 @@ export function AccountDashboard({
   const { add, remove, has } = useWatchlist();
   const watching = has(wallet);
   const [manualRefreshBusy, setManualRefreshBusy] = useState(false);
+  /** false = Data API positions only (`no_gamma`)；true = full Gamma enrichment */
+  const [wantFullGamma, setWantFullGamma] = useState(false);
 
   const publicProfileQ = useQuery({
     queryKey: ["public-profile", wallet],
@@ -143,15 +185,20 @@ export function AccountDashboard({
 
   /** Delivery: Postgres cache only (fast). */
   const analyzeCachedQ = useQuery({
-    queryKey: ["analyze", wallet, "cached"],
-    queryFn: ({ signal }) => fetchAnalyzeCachedOnly(wallet, { signal }),
+    queryKey: ["analyze", wallet, "cached", wantFullGamma ? "full" : "fast"],
+    queryFn: ({ signal }) =>
+      fetchAnalyzeCachedOnly(wallet, {
+        signal,
+        noGamma: !wantFullGamma,
+      }),
     staleTime: 60 * 1000,
   });
 
   /** Full pipeline; runs in parallel — UI shows cached data first when available. */
   const analyzeFullQ = useQuery({
-    queryKey: ["analyze", wallet],
-    queryFn: ({ signal }) => fetchAnalyzeReport(wallet, { signal }),
+    queryKey: ["analyze", wallet, wantFullGamma ? "full" : "fast"],
+    queryFn: ({ signal }) =>
+      fetchAnalyzeReport(wallet, { signal, noGamma: !wantFullGamma }),
     staleTime: 2 * 60 * 1000,
   });
 
@@ -198,10 +245,11 @@ export function AccountDashboard({
     setManualRefreshBusy(true);
     try {
       await queryClient.fetchQuery({
-        queryKey: ["analyze", wallet],
+        queryKey: ["analyze", wallet, "full"],
         queryFn: ({ signal }) =>
-          fetchAnalyzeReport(wallet, { noCache: true, signal }),
+          fetchAnalyzeReport(wallet, { noCache: true, noGamma: false, signal }),
       });
+      setWantFullGamma(true);
       await queryClient.invalidateQueries({
         queryKey: ["analyze", wallet, "cached"],
       });
@@ -222,6 +270,23 @@ export function AccountDashboard({
     const rows = raw.slice(-LEDGER_UI_MAX);
     return { total, rows };
   }, [fe?.trade_ledger]);
+
+  const pairedSlice = useMemo(() => {
+    const raw = fe?.trade_ledger_paired;
+    if (!Array.isArray(raw) || !raw.length) return null;
+    const total = raw.length;
+    const rows = raw.slice(-LEDGER_UI_MAX);
+    return { total, rows };
+  }, [fe?.trade_ledger_paired]);
+
+  /** 2.5.3+ 报告含 `trade_ledger_paired` 字段时展示（可为空数组 → 空态）。 */
+  const showPairedLedgerBlock = Boolean(fe && "trade_ledger_paired" in fe);
+
+  /** 有「最近成交」或应有台账时，始终展示台账区块（避免旧缓存缺字段时整块消失）。 */
+  const showLedgerSection =
+    Boolean(fe) &&
+    ((fe?.recent_trades?.length ?? 0) > 0 ||
+      (fe?.trade_ledger?.length ?? 0) > 0);
   const truncated = data?.data_fetch?.truncated;
   const titlePrimary =
     gp?.display_name || gp?.username || shortAddr(wallet);
@@ -383,10 +448,22 @@ export function AccountDashboard({
         </div>
       ) : null}
 
+      <OfficialPolymarketWalletApisPanel wallet={wallet} />
+
       <OfficialPolymarketUserPanel wallet={wallet} />
 
+      {analyzeReady &&
+      data?.frontend?.position_markets &&
+      data.frontend.position_markets.length > 0 ? (
+        <PositionMarketActivityPanel
+          wallet={wallet}
+          markets={data.frontend.position_markets}
+          tr={tr}
+        />
+      ) : null}
+
       {analyzeReady && data ? (
-        <p className="font-jetbrains text-[10px] tracking-wide text-zinc-500">
+        <p className="m-0 font-jetbrains text-[10px] tracking-wide text-zinc-500">
           <span className="text-zinc-600">{tr("account.reportUpdatedAt")}</span>{" "}
           {formatReportUpdatedAt(data.report_updated_at, locale) ?? "—"}
         </p>
@@ -777,53 +854,161 @@ export function AccountDashboard({
                 </div>
               )}
 
-              {ledgerSlice && (
+              {showPairedLedgerBlock && (
+                <div className="space-y-2">
+                  <p className="font-jetbrains text-[10px] uppercase tracking-widest text-zinc-600">
+                    {tr("account.ledgerPairedSource")}
+                  </p>
+                  {pairedSlice ? (
+                    <>
+                      <DataTable
+                        title={tr("account.ledgerPairedTitle")}
+                        badge={
+                          pairedSlice.total > LEDGER_UI_MAX
+                            ? tr("account.ledgerBadgeTruncated")
+                                .replace("{shown}", String(LEDGER_UI_MAX))
+                                .replace("{total}", String(pairedSlice.total))
+                            : `${pairedSlice.total}`
+                        }
+                        columns={[
+                          tr("account.colTime"),
+                          tr("account.colSlug"),
+                          tr("account.colKind"),
+                          tr("account.colOutcome"),
+                          tr("account.colBuyShares"),
+                          tr("account.colBuyPrice"),
+                          tr("account.colBuyTotal"),
+                          tr("account.colSellPrice"),
+                          tr("account.colSellTotal"),
+                          tr("account.colPnl"),
+                        ]}
+                        rows={tradeLedgerRowsToDataCells(
+                          pairedSlice.rows,
+                          locale,
+                          tr,
+                        )}
+                      />
+                      <p className="font-jetbrains text-[10px] leading-relaxed text-zinc-600">
+                        {tr("account.ledgerPairedFootnote")}
+                      </p>
+                    </>
+                  ) : (
+                    <div className="overflow-hidden rounded-xl border border-white/5 bg-surface-container-low">
+                      <div className="border-b border-white/5 px-4 py-4 font-jetbrains text-xs uppercase tracking-widest sm:px-6">
+                        {tr("account.ledgerPairedTitle")}
+                      </div>
+                      <p className="px-4 py-5 font-jetbrains text-[11px] leading-relaxed text-zinc-400 sm:px-6">
+                        {tr("account.ledgerPairedEmpty")}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {fe?.trade_ledger_integrity &&
+              (showPairedLedgerBlock || showLedgerSection) ? (
+                <p
+                  className={cn(
+                    "font-jetbrains text-[10px] leading-relaxed",
+                    fe.trade_ledger_integrity.integrity_ok
+                      ? "text-zinc-600"
+                      : "text-error",
+                  )}
+                >
+                  {tr("account.ledgerIntegrityLine")
+                    .replace(
+                      "{full}",
+                      String(fe.trade_ledger_integrity.full_row_count),
+                    )
+                    .replace(
+                      "{buy}",
+                      String(fe.trade_ledger_integrity.buy_row_count),
+                    )
+                    .replace(
+                      "{sell}",
+                      String(fe.trade_ledger_integrity.sell_row_count),
+                    )
+                    .replace(
+                      "{settlement}",
+                      String(fe.trade_ledger_integrity.settlement_row_count),
+                    )
+                    .replace(
+                      "{paired}",
+                      String(fe.trade_ledger_integrity.paired_row_count),
+                    )
+                    .replace(
+                      "{sumFull}",
+                      fe.trade_ledger_integrity.sum_pnl_full.toFixed(2),
+                    )
+                    .replace(
+                      "{sumPaired}",
+                      fe.trade_ledger_integrity.sum_pnl_paired.toFixed(2),
+                    )
+                    .replace(
+                      "{flag}",
+                      fe.trade_ledger_integrity.integrity_ok
+                        ? tr("account.ledgerIntegrityOk")
+                        : tr("account.ledgerIntegrityBad"),
+                    )}
+                </p>
+              ) : null}
+
+              {showLedgerSection && (
                 <div className="space-y-2">
                   <p className="font-jetbrains text-[10px] uppercase tracking-widest text-zinc-600">
                     {tr("account.ledgerSource")}
                   </p>
-                  <DataTable
-                    title={tr("account.ledgerTitle")}
-                    badge={
-                      ledgerSlice.total > LEDGER_UI_MAX
-                        ? tr("account.ledgerBadgeTruncated")
-                            .replace("{shown}", String(LEDGER_UI_MAX))
-                            .replace("{total}", String(ledgerSlice.total))
-                        : `${ledgerSlice.total}`
-                    }
-                    columns={[
-                      tr("account.colTime"),
-                      tr("account.colSlug"),
-                      tr("account.colKind"),
-                      tr("account.colOutcome"),
-                      tr("account.colBuyShares"),
-                      tr("account.colBuyPrice"),
-                      tr("account.colBuyTotal"),
-                      tr("account.colSellPrice"),
-                      tr("account.colSellTotal"),
-                      tr("account.colPnl"),
-                    ]}
-                    rows={ledgerSlice.rows.map((row) => ({
-                      cells: [
-                        fmtLedgerTs(row.ts_ms, locale),
-                        row.title || row.slug || "—",
-                        ledgerKindLabel(row.row_kind, tr),
-                        row.outcome?.trim() || "—",
-                        fmtLedgerScalar(row.size, "qty"),
-                        fmtLedgerScalar(row.buy_price, "price"),
-                        row.buy_total !== 0
-                          ? fmtUsd(row.buy_total)
-                          : "—",
-                        fmtLedgerScalar(row.sell_price, "price"),
-                        row.sell_total !== 0
-                          ? fmtUsd(row.sell_total)
-                          : "—",
-                        row.pnl !== 0
-                          ? fmtUsd(row.pnl, { signed: true })
-                          : "—",
-                      ],
-                    }))}
-                  />
+                  {ledgerSlice ? (
+                    <>
+                      <DataTable
+                        title={tr("account.ledgerTitle")}
+                        badge={
+                          ledgerSlice.total > LEDGER_UI_MAX
+                            ? tr("account.ledgerBadgeTruncated")
+                                .replace("{shown}", String(LEDGER_UI_MAX))
+                                .replace("{total}", String(ledgerSlice.total))
+                            : `${ledgerSlice.total}`
+                        }
+                        columns={[
+                          tr("account.colTime"),
+                          tr("account.colSlug"),
+                          tr("account.colKind"),
+                          tr("account.colOutcome"),
+                          tr("account.colBuyShares"),
+                          tr("account.colBuyPrice"),
+                          tr("account.colBuyTotal"),
+                          tr("account.colSellPrice"),
+                          tr("account.colSellTotal"),
+                          tr("account.colPnl"),
+                        ]}
+                        rows={tradeLedgerRowsToDataCells(
+                          ledgerSlice.rows,
+                          locale,
+                          tr,
+                        )}
+                      />
+                      <p className="font-jetbrains text-[10px] leading-relaxed text-zinc-600">
+                        {tr("account.ledgerFootnote")}
+                      </p>
+                    </>
+                  ) : (
+                    <div className="overflow-hidden rounded-xl border border-white/5 bg-surface-container-low">
+                      <div className="border-b border-white/5 px-4 py-4 font-jetbrains text-xs uppercase tracking-widest sm:px-6">
+                        {tr("account.ledgerTitle")}
+                      </div>
+                      <div className="space-y-3 px-4 py-5 font-jetbrains text-[11px] leading-relaxed text-zinc-400 sm:px-6">
+                        <p>{tr("account.ledgerEmptyBody")}</p>
+                        {data?.schema_version ? (
+                          <p className="text-zinc-500">
+                            {tr("account.ledgerEmptySchema").replace(
+                              "{v}",
+                              data.schema_version,
+                            )}
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </>

@@ -1,14 +1,13 @@
 /**
- * Gamma `GET /public-profile`：默认经 **Analyzer 后端** `GET /gamma-public-profile/:wallet`
- *（与 `/analyze` 同源出网，无需浏览器 CORS、无需本机 VPN/HTTPS_PROXY）。
+ * Gamma `GET /public-profile`：默认经 **同源** Next **`/api/polymarket-public-profile`** 转发（gamma-api **不**对浏览器返回 CORS，直连会失败）。
  *
- * - `NEXT_PUBLIC_POLYMARKET_GAMMA_USE_NEXT_PROXY=1`：改走 Next `/api/polymarket-public-profile`（仅特殊部署）
- * - `NEXT_PUBLIC_POLYMARKET_GAMMA_LEGACY_BROWSER_DIRECT=1`：浏览器直连 `gamma-api`（易 CORS 失败）
+ * - `NEXT_PUBLIC_POLYMARKET_GAMMA_BROWSER_DIRECT=1`：强制浏览器直连 gamma（一般仅调试）
+ * - 上游 URL 覆盖：服务端 **`POLYMARKET_GAMMA_ORIGIN`**（API Route）；展示用 **`NEXT_PUBLIC_POLYMARKET_GAMMA_ORIGIN`**
  *
  * 文档：https://docs.polymarket.com/api-reference/profiles/get-public-profile-by-wallet-address
  */
 
-import { apiUrl } from "@/lib/api";
+import { gammaPublicProfileFetchUrl } from "@/lib/polymarket-official-wallet-apis";
 
 export type PolymarketPublicProfileParsed = {
   displayName: string | null;
@@ -32,11 +31,6 @@ type GammaPublicProfileJson = {
   createdAt?: string | null;
   bio?: string | null;
 };
-
-function truthyEnv(v: string | undefined): boolean {
-  const s = v?.trim().toLowerCase();
-  return s === "1" || s === "true" || s === "yes";
-}
 
 export function parseGammaPublicProfile(
   j: GammaPublicProfileJson,
@@ -75,22 +69,7 @@ export function parseGammaPublicProfile(
 }
 
 function publicProfileRequestUrl(wallet: string): string {
-  const w = wallet.trim().toLowerCase();
-  const q = `address=${encodeURIComponent(w)}`;
-
-  if (truthyEnv(process.env.NEXT_PUBLIC_POLYMARKET_GAMMA_USE_NEXT_PROXY)) {
-    return `/api/polymarket-public-profile?${q}`;
-  }
-
-  if (truthyEnv(process.env.NEXT_PUBLIC_POLYMARKET_GAMMA_LEGACY_BROWSER_DIRECT)) {
-    const origin = (
-      process.env.NEXT_PUBLIC_POLYMARKET_GAMMA_ORIGIN?.trim() ||
-      "https://gamma-api.polymarket.com"
-    ).replace(/\/$/, "");
-    return `${origin}/public-profile?${q}`;
-  }
-
-  return apiUrl(`gamma-public-profile/${encodeURIComponent(w)}`);
+  return gammaPublicProfileFetchUrl(wallet);
 }
 
 export async function fetchPolymarketPublicProfile(

@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ANALYZE_WALLET_RE } from "@/lib/evm-wallet";
-import { fetchPolymarketUpstream } from "@/lib/polymarket-upstream-fetch";
+import {
+  fetchPolymarketUpstream,
+  fetchPolymarketUpstreamBare,
+} from "@/lib/polymarket-upstream-fetch";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +28,7 @@ function formatFetchError(e: unknown): string {
   return String(e);
 }
 
-/** 可选同源代理：默认前端直连 gamma-api；`NEXT_PUBLIC_POLYMARKET_GAMMA_SERVER_PROXY=1` 时走此路由。 */
+/** 同源代理：前端默认 `fetch('/api/polymarket-public-profile?...')`，由 Node 请求 gamma-api（避免浏览器 CORS）。 */
 export async function GET(req: NextRequest) {
   const address = req.nextUrl.searchParams.get("address")?.trim() ?? "";
   if (!ANALYZE_WALLET_RE.test(address)) {
@@ -33,14 +36,23 @@ export async function GET(req: NextRequest) {
   }
 
   const target = `${gammaBase()}/public-profile?address=${encodeURIComponent(address)}`;
+  const hdrs = {
+    accept: "application/json",
+    "user-agent": UPSTREAM_UA,
+  };
   let res: Awaited<ReturnType<typeof fetchPolymarketUpstream>>;
   try {
-    res = await fetchPolymarketUpstream(target, {
-      headers: {
-        accept: "application/json",
-        "user-agent": UPSTREAM_UA,
-      },
-    });
+    try {
+      res = await fetchPolymarketUpstreamBare(target, { headers: hdrs });
+    } catch (bareErr) {
+      if (process.env.NODE_ENV === "development") {
+        console.warn(
+          "[polymarket-public-profile] bare undici failed, retry with agent/proxy:",
+          formatFetchError(bareErr),
+        );
+      }
+      res = await fetchPolymarketUpstream(target, { headers: hdrs });
+    }
   } catch (e) {
     if (process.env.NODE_ENV === "development") {
       console.error("[polymarket-public-profile] upstream fetch failed:", target, e);
@@ -49,7 +61,7 @@ export async function GET(req: NextRequest) {
       {
         error: `upstream_unavailable: ${formatFetchError(e)}`,
         hint:
-          "Node 访问 gamma-api 超时或被墙：在 .env.local 设 HTTPS_PROXY=http://127.0.0.1:端口（与浏览器代理一致），或配置 POLYMARKET_GAMMA_ORIGIN 反代；也可设 NEXT_PUBLIC_POLYMARKET_GAMMA_SERVER_PROXY=0 改浏览器直连（可能 CORS）。",
+          "Node 访问 gamma-api 失败：可试在 .env.local 设 HTTPS_PROXY（与系统代理一致）、POLYMARKET_GAMMA_ORIGIN 反代，或拉长 POLYMARKET_UPSTREAM_*_TIMEOUT_MS；浏览器地址栏能打开不代表 Node 能出网。",
       },
       { status: 502 },
     );
